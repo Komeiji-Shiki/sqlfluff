@@ -191,6 +191,72 @@ def test__templated_file_find_slice_indices_of_templated_pos(
 
 
 @pytest.mark.parametrize(
+    "templated_position,start_idx,inclusive,expected",
+    [
+        (0, None, True, (0, 1)),
+        (1, None, True, (0, 4)),
+        (1, None, False, (0, 1)),
+        (1, 1, True, (1, 4)),
+        (1, 1, False, (1, 1)),
+        (1, 2, True, (2, 4)),
+        (1, 3, False, (3, 3)),
+        (2, None, True, (3, 4)),
+        (2, None, False, (3, 4)),
+    ],
+)
+def test__templated_file_coincident_boundaries(
+    templated_position, start_idx, inclusive, expected
+):
+    """Preserve touching slices and search hints at zero-length boundaries."""
+    file = TemplatedFile(
+        source_str="a{{x}}{{y}}b",
+        templated_str="ab",
+        fname="test.sql",
+        sliced_file=[
+            TemplatedFileSlice("literal", slice(0, 1), slice(0, 1)),
+            TemplatedFileSlice("templated", slice(1, 6), slice(1, 1)),
+            TemplatedFileSlice("templated", slice(6, 11), slice(1, 1)),
+            TemplatedFileSlice("literal", slice(11, 12), slice(1, 2)),
+        ],
+        raw_sliced=[
+            RawFileSlice("a", "literal", 0),
+            RawFileSlice("{{x}}", "templated", 1),
+            RawFileSlice("{{y}}", "templated", 6),
+            RawFileSlice("b", "literal", 11),
+        ],
+    )
+    assert file._find_slice_indices_of_templated_pos(
+        templated_position, start_idx=start_idx, inclusive=inclusive
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    "start,stop,indices,literal",
+    [
+        (0, 0, [0], True),
+        (10, 10, [1], True),
+        (17, 17, [2], True),
+        (25, 25, [], True),
+        (5, 10, [0], True),
+        (10, 17, [1], False),
+        (17, 25, [2], True),
+        (0, 25, [0, 1, 2], False),
+        (9, 18, [0, 1, 2], False),
+        (16, 17, [1], False),
+        (16, 18, [1, 2], False),
+    ],
+)
+def test__templated_file_source_slice_boundaries(start, stop, indices, literal):
+    """Keep source slice membership and literalness consistent at boundaries."""
+    file = TemplatedFile(**SIMPLE_FILE_KWARGS)
+    source_slice = slice(start, stop)
+    assert file.raw_slices_spanning_source_slice(source_slice) == [
+        file.raw_sliced[idx] for idx in indices
+    ]
+    assert file.is_source_slice_literal(source_slice) == literal
+
+
+@pytest.mark.parametrize(
     "in_slice,out_slice,is_literal,tf_kwargs",
     [
         # Simple example

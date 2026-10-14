@@ -1,7 +1,7 @@
 """Defines the templaters."""
 
 import logging
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
 from collections.abc import Iterable, Iterator
 from typing import (
     Any,
@@ -287,26 +287,21 @@ class TemplatedFile:
         NB: the last_idx is exclusive, as the intent is to use this as a slice.
         """
         start_idx = start_idx or 0
-        first_idx: Optional[int] = None
-        last_idx = start_idx
-        # Work through the sliced file, starting at the start_idx if given
-        # as an optimisation hint. The sliced_file is a list of TemplatedFileSlice
-        # which reference parts of the templated file and where they exist in the
-        # source.
-        for idx, elem in enumerate(self.sliced_file[start_idx:]):
-            last_idx = idx + start_idx
-            if elem[2].stop >= templated_pos:
-                if first_idx is None:
-                    first_idx = idx + start_idx
-                if elem[2].start > templated_pos:
-                    break
-                elif not inclusive and elem[2].start >= templated_pos:
-                    break
-        # If we got to the end add another index
-        else:
-            last_idx += 1
-        if first_idx is None:  # pragma: no cover
+        # 渲染切片连续且有序；左右端点分别搜索，保留交界处的零长度切片。
+        first_idx = bisect_left(
+            self.sliced_file,
+            templated_pos,
+            lo=start_idx,
+            key=lambda elem: elem.templated_slice.stop,
+        )
+        if first_idx >= len(self.sliced_file):  # pragma: no cover
             raise ValueError("Position Not Found")
+        last_idx = (bisect_right if inclusive else bisect_left)(
+            self.sliced_file,
+            templated_pos,
+            lo=first_idx,
+            key=lambda elem: elem.templated_slice.start,
+        )
         return first_idx, last_idx
 
     def raw_slices_spanning_source_slice(
@@ -317,24 +312,22 @@ class TemplatedFile:
         last_raw_slice = self.raw_sliced[-1]
         if source_slice.start >= last_raw_slice.source_idx + len(last_raw_slice.raw):
             return []
-        # First find the start index
-        raw_slice_idx = 0
-        # Move the raw pointer forward to the start of this patch
-        while (
-            raw_slice_idx + 1 < len(self.raw_sliced)
-            and self.raw_sliced[raw_slice_idx + 1].source_idx <= source_slice.start
-        ):
-            raw_slice_idx += 1
-        # Find slice index of the end of this patch.
-        slice_span = 1
-        while (
-            raw_slice_idx + slice_span < len(self.raw_sliced)
-            and self.raw_sliced[raw_slice_idx + slice_span].source_idx
-            < source_slice.stop
-        ):
-            slice_span += 1
+        # 起点位于交界处时选择右侧切片；零长度范围仍返回该切片。
+        raw_slice_idx = max(
+            0,
+            bisect_right(
+                self.raw_sliced, source_slice.start, key=lambda elem: elem.source_idx
+            )
+            - 1,
+        )
+        stop_idx = bisect_left(
+            self.raw_sliced,
+            source_slice.stop,
+            lo=raw_slice_idx + 1,
+            key=lambda elem: elem.source_idx,
+        )
         # Return the raw slices:
-        return self.raw_sliced[raw_slice_idx : raw_slice_idx + slice_span]
+        return self.raw_sliced[raw_slice_idx:stop_idx]
 
     def templated_slice_to_source_slice(
         self,
@@ -393,7 +386,8 @@ class TemplatedFile:
 
         # Update starting position based on insertion point:
         if insertion_point >= 0:
-            for elem in self.sliced_file[ts_start_sf_start:]:
+            for slice_idx in range(ts_start_sf_start, len(self.sliced_file)):
+                elem = self.sliced_file[slice_idx]
                 if elem[1].start != insertion_point:
                     ts_start_sf_start += 1
                 else:
@@ -461,7 +455,16 @@ class TemplatedFile:
         if source_slice.start == source_slice.stop:
             return True
         is_literal = True
-        for raw_slice in self.raw_sliced:
+        # 从覆盖起点的切片开始，避免每次定位都扫描并复制前面的源码切片。
+        start_idx = max(
+            0,
+            bisect_right(
+                self.raw_sliced, source_slice.start, key=lambda elem: elem.source_idx
+            )
+            - 1,
+        )
+        for raw_slice_idx in range(start_idx, len(self.raw_sliced)):
+            raw_slice = self.raw_sliced[raw_slice_idx]
             # Reset if we find a literal and we're up to the start
             # otherwise set false.
             if raw_slice.source_idx <= source_slice.start:

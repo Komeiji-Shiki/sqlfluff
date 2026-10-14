@@ -59,6 +59,13 @@ class JinjaTracer:
         self.sliced_file = sliced_file
         self.render_func = render_func
 
+        # 分析器已分配唯一标记；循环再次输出同一标记时直接复用其切片位置。
+        self._slice_indices: dict[Union[int, str], int] = {}
+        for idx, raw_slice in enumerate(raw_sliced):
+            alternate_id = raw_slice_info[raw_slice].unique_alternate_id
+            if alternate_id is not None:
+                self._slice_indices[alternate_id] = idx
+
         # Internal bookkeeping
         self.program_counter: int = 0
         self.source_idx: int = 0
@@ -136,16 +143,12 @@ class JinjaTracer:
 
         A slice identifier is a string like 00000000000000000000000000000002.
         """
-        raw_slices_search_result = [
-            idx
-            for idx, rs in enumerate(self.raw_sliced)
-            if self.raw_slice_info[rs].unique_alternate_id == slice_identifier
-        ]
-        if len(raw_slices_search_result) != 1:
+        try:
+            return self._slice_indices[slice_identifier]
+        except KeyError:
             raise ValueError(  # pragma: no cover
                 f"Internal error. Unable to locate slice for {slice_identifier}."
-            )
-        return raw_slices_search_result[0]
+            ) from None
 
     def move_to_slice(
         self,

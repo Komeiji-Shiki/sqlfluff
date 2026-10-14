@@ -1118,6 +1118,21 @@ def test__templater_jinja_slice_template(test, result, analyzer_class):
     assert resp == [RawFileSlice(*args) for args in result]
 
 
+def test__templater_jinja_trace_slice_lookup():
+    """Resolve repeated trace identifiers to the original template slices."""
+    templater = JinjaTemplater()
+    env, _, render_func = templater.construct_render_func()
+    analyzer = JinjaAnalyzer("{% for n in range(3) %}{{ n }}{% endfor %}", env)
+    tracer = analyzer.analyze(render_func)
+    for idx, raw_slice in enumerate(tracer.raw_sliced):
+        alternate_id = tracer.raw_slice_info[raw_slice].unique_alternate_id
+        if alternate_id is not None:
+            assert tracer.find_slice_index(alternate_id) == idx
+    assert tracer.trace().templated_str == "012"
+    with pytest.raises(ValueError, match="Unable to locate slice"):
+        tracer.find_slice_index("missing")
+
+
 class DBMigrationExtension(Extension):
     """Example of a hypothetical custom Jinja extension.
 
