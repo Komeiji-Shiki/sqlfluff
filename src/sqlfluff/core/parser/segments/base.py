@@ -532,6 +532,8 @@ class BaseSegment(metaclass=SegmentMetaclass):
         cls,
         segments: tuple[BaseSegment, ...],
         parent_pos: PositionMarker,
+        *,
+        reusable_segment_ids: Optional[set[int]] = None,
     ) -> tuple[BaseSegment, ...]:
         """Refresh positions of segments within a span.
 
@@ -543,6 +545,10 @@ class BaseSegment(metaclass=SegmentMetaclass):
         New segments are assumed to be metas or insertions
         and so therefore have a zero-length position in the
         source and templated file.
+
+        ``reusable_segment_ids`` identifies independent copies owned by the
+        caller. If their position is already correct, they can be reused
+        without copying their descendants again.
         """
         assert segments, "_position_segments called on empty sequence."
         line_no = parent_pos.working_line_no
@@ -550,7 +556,7 @@ class BaseSegment(metaclass=SegmentMetaclass):
 
         # Use the index so that we can look forward
         # and backward.
-        segment_buffer: tuple[BaseSegment, ...] = ()
+        segment_buffer: list[BaseSegment] = []
         for idx, segment in enumerate(segments):
             # Get hold of the current position.
             old_position = segment.pos_marker
@@ -622,6 +628,15 @@ class BaseSegment(metaclass=SegmentMetaclass):
                 segment.raw, line_no, line_pos
             )
 
+            # 子级修复已生成独立副本，位置不变时可直接交给新父节点。
+            if (
+                reusable_segment_ids
+                and id(segment) in reusable_segment_ids
+                and old_position == new_position
+            ):
+                segment_buffer.append(segment)
+                continue
+
             # NOTE: If the position is already correct, we still
             # need to copy, but we don't need to reposition any further.
             if segment.segments and old_position != new_position:
@@ -632,16 +647,14 @@ class BaseSegment(metaclass=SegmentMetaclass):
                     segment.segments, parent_pos=new_position
                 )
                 new_seg = segment.copy(segments=child_segments)
-                new_seg.pos_marker = new_position
             else:
                 new_seg = segment.copy()
-                new_seg.pos_marker = new_position
 
             new_seg.pos_marker = new_position
-            segment_buffer += (new_seg,)
+            segment_buffer.append(new_seg)
             continue
 
-        return segment_buffer
+        return tuple(segment_buffer)
 
     # ################ CLASS METHODS
 

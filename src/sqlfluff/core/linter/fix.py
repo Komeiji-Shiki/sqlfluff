@@ -249,6 +249,7 @@ def apply_fixes(
     # Then recurse (i.e. deal with the children) (Requeueing)
     seg_queue = seg_buffer
     seg_buffer = []
+    reusable_segment_ids = set()
     for seg in seg_queue:
         s, pre, post, validated = apply_fixes(
             seg,
@@ -258,6 +259,9 @@ def apply_fixes(
             max_parse_depth=max_parse_depth,
             max_parse_nodes=max_parse_nodes,
         )
+        # 子级返回的新对象已与原树隔离，父级定位时无需再次深拷贝。
+        if s is not seg:
+            reusable_segment_ids.add(id(s))
         # 'before' and 'after' will usually be empty. Only used when
         # lower-level fixes left 'seg' with non-code (usually
         # whitespace) segments as the first or last children. This is
@@ -298,7 +302,9 @@ def apply_fixes(
         new_seg = segment.__class__(
             # Realign the segments within
             segments=segment._position_segments(
-                tuple(seg_buffer), parent_pos=segment.pos_marker
+                tuple(seg_buffer),
+                parent_pos=segment.pos_marker,
+                reusable_segment_ids=reusable_segment_ids,
             ),
             pos_marker=segment.pos_marker,
             # Pass through any additional kwargs

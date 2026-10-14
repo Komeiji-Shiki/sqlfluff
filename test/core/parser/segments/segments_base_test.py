@@ -433,6 +433,30 @@ def test__parser__base_segments_copy_segments_reparents_children(
     assert old_seg.segments[0].get_parent()[0] is not old_seg
 
 
+@pytest.mark.parametrize(
+    "reuse,working_loc", [(False, (1, 1)), (True, (1, 1)), (True, (3, 4))]
+)
+def test__parser__position_owned_segments(
+    generate_test_segments, DummySegment, reuse, working_loc
+):
+    """Reuse owned trees only when positions match, without sharing source nodes."""
+    source = DummySegment(generate_test_segments(["foo", "bar"]))
+    owned = source.copy()
+    parent_pos = source.pos_marker.with_working_position(*working_loc)
+    positioned = BaseSegment._position_segments(
+        (owned,),
+        parent_pos,
+        reusable_segment_ids={id(owned)} if reuse else None,
+    )[0]
+    assert (positioned is owned) == (reuse and working_loc == (1, 1))
+    assert positioned.pos_marker.working_loc == working_loc
+    assert positioned.segments[0].pos_marker.working_loc == working_loc
+    assert source.segments[0] is not positioned.segments[0]
+    assert source.segments[0].get_parent()[0] is source
+    assert source.segments[0].pos_marker.working_loc == (1, 1)
+    assert positioned.segments[0].get_parent()[0] is positioned
+
+
 def test__parser__raw_segment_raw_normalized():
     """Test comparison of raw segments."""
     template = TemplatedFile.from_string('"a"""."e"')

@@ -6,7 +6,7 @@ import pytest
 
 from sqlfluff.core import Linter
 from sqlfluff.core.config import FluffConfig
-from sqlfluff.core.linter.fix import compute_anchor_edit_info
+from sqlfluff.core.linter.fix import apply_fixes, compute_anchor_edit_info
 from sqlfluff.core.linter.patch import (
     FixPatch,
     generate_source_patches,
@@ -28,6 +28,37 @@ from sqlfluff.core.templaters.base import TemplatedFileSlice
 def raw_segments(generate_test_segments):
     """Construct a list of raw segments as a fixture."""
     return generate_test_segments(["foobar", ".barfoo"])
+
+
+def test_apply_fixes_preserves_source_tree():
+    """Reusing edited subtrees must leave the original tree and parents intact."""
+    default_config = FluffConfig(overrides={"dialect": "ansi"})
+    linter = Linter(config=default_config)
+    tree = linter.parse_string("SELECT a, COALESCE(b, 0) AS c FROM t").tree
+    source_raws = tree.raw_segments
+    source_positions = [segment.pos_marker for segment in source_raws]
+    source_parents = [segment.get_parent()[0] for segment in source_raws]
+    anchor = next(segment for segment in source_raws if segment.raw == "a")
+    fixed, before, after, valid = apply_fixes(
+        tree,
+        dialect=default_config.get("dialect_obj"),
+        rule_code="TEST",
+        fixes=compute_anchor_edit_info(
+            [LintFix.replace(anchor, [anchor.edit(raw="longer_name")])]
+        ),
+        max_parse_depth=default_config.get("max_parse_depth"),
+    )
+    assert valid and not before and not after
+    assert fixed.raw == "SELECT longer_name, COALESCE(b, 0) AS c FROM t"
+    assert tree.raw == "SELECT a, COALESCE(b, 0) AS c FROM t"
+    assert [segment.pos_marker for segment in source_raws] == source_positions
+    assert all(
+        segment.get_parent()[0] is parent
+        for segment, parent in zip(source_raws, source_parents)
+    )
+    assert not {id(segment) for segment in source_raws}.intersection(
+        id(segment) for segment in fixed.raw_segments
+    )
 
 
 def test__rules_base_segments_compute_anchor_edit_info(raw_segments):
