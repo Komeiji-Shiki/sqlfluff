@@ -196,6 +196,9 @@ class ReflowBlock(ReflowElement):
         for hash, class_types in zip(
             depth_info.stack_hashes, depth_info.stack_class_types
         ):
+            # 未配置的祖先类型不会贡献这几项设置，直接跳过默认配置的构造。
+            if config.config_types.isdisjoint(class_types):
+                continue
             cfg = config.get_block_config(class_types)
             if cfg.spacing_within:
                 stack_spacing_configs[hash] = cfg.spacing_within

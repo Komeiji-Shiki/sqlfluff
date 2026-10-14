@@ -132,10 +132,47 @@ class DepthMap:
     def from_parent(cls: type["DepthMap"], parent: BaseSegment) -> "DepthMap":
         """Generate a DepthMap from all the children of a segment.
 
-        NOTE: This is the most efficient way to construct a DepthMap
-        due to caching in the BaseSegment.
+        Ancestor metadata is built incrementally while walking the tree.
+        Immutable path metadata is shared by siblings, while each segment
+        receives its own positions dictionary.
         """
-        return cls(raws_with_stack=parent.raw_segments_with_ancestors)
+        depth_map = cls(raws_with_stack=[])
+        if not parent.segments:
+            return depth_map
+
+        stack = [(parent, DepthInfo(0, (), frozenset(), (), {}))]
+        while stack:
+            segment, depth_info = stack.pop()
+            if segment.is_type("raw"):
+                depth_map.depth_info[segment.uuid] = depth_info
+                continue
+
+            # 每个父节点只构造一次祖先序列，子节点共享其中的不可变信息。
+            segment_hash = hash(segment)
+            stack_hashes = (*depth_info.stack_hashes, segment_hash)
+            stack_class_types = (*depth_info.stack_class_types, segment.class_types)
+            stack_hash_set = frozenset(stack_hashes)
+            child_count = len(segment.segments)
+            code_indices = segment._code_indices
+            # 逆序入栈，保持原来的源码遍历顺序。
+            for idx in range(child_count - 1, -1, -1):
+                stack_positions = depth_info.stack_positions.copy()
+                stack_positions[segment_hash] = StackPosition.from_path_step(
+                    PathStep(segment, idx, child_count, code_indices)
+                )
+                stack.append(
+                    (
+                        segment.segments[idx],
+                        DepthInfo(
+                            stack_depth=depth_info.stack_depth + 1,
+                            stack_hashes=stack_hashes,
+                            stack_hash_set=stack_hash_set,
+                            stack_class_types=stack_class_types,
+                            stack_positions=stack_positions,
+                        ),
+                    )
+                )
+        return depth_map
 
     @classmethod
     def from_raws_and_root(

@@ -1,6 +1,9 @@
 """Tests for the depthmap object."""
 
+import pytest
+
 from sqlfluff.core import Linter
+from sqlfluff.core.parser.segments.raw import RawSegment
 from sqlfluff.utils.reflow.depthmap import DepthMap, StackPosition
 
 
@@ -63,6 +66,37 @@ def test_reflow_depthmap_from_raws_and_root(default_config):
     # The depth info dict depends on the sequence so we only need
     # to check those are equal.
     assert dm_direct.depth_info == dm_indirect.depth_info
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT a, (b + 1) AS total FROM t ORDER BY total DESC",
+        "SELECT COALESCE(TRIM(NULLIF(foo, '')), 'x'), foo /* comment */ "
+        "FROM (SELECT foo FROM t) AS q",
+        "WITH x AS (SELECT a FROM t) "
+        "SELECT x.a FROM x UNION ALL SELECT a FROM u",
+    ],
+)
+def test_reflow_depthmap_incremental_paths(sql, default_config):
+    """Preserve ancestor metadata, traversal order and inserted segment depths."""
+    root = parse_ansi_string(sql, default_config)
+    expected = DepthMap(root.raw_segments_with_ancestors)
+    actual = DepthMap.from_parent(root)
+    assert actual.depth_info == expected.depth_info
+    assert list(actual.depth_info) == list(expected.depth_info)
+
+    anchor = root.raw_segments[0]
+    inserted = RawSegment("inserted")
+    actual.copy_depth_info(anchor, inserted, trim=1)
+    assert actual.get_depth_info(inserted) == expected.get_depth_info(anchor).trim(1)
+    assert actual.get_depth_info(anchor) == expected.get_depth_info(anchor)
+    assert inserted.uuid not in expected.depth_info
+
+
+def test_reflow_depthmap_leaf_parent():
+    """A parent with no children contributes no descendant depth information."""
+    assert DepthMap.from_parent(RawSegment("leaf")).depth_info == {}
 
 
 def test_reflow_depthmap_order_by(default_config):
