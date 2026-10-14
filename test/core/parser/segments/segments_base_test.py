@@ -1,11 +1,12 @@
 """Test the BaseSegment class."""
 
+import logging
 import pickle
 
 import pytest
 
 from sqlfluff.core import Linter
-from sqlfluff.core.parser import BaseSegment, PositionMarker, RawSegment
+from sqlfluff.core.parser import BaseSegment, PositionMarker, RawSegment, StringParser
 from sqlfluff.core.parser.segments.base import PathStep
 from sqlfluff.core.rules.base import LintFix
 from sqlfluff.core.templaters import TemplatedFile
@@ -455,6 +456,25 @@ def test__parser__position_owned_segments(
     assert source.segments[0].get_parent()[0] is source
     assert source.segments[0].pos_marker.working_loc == (1, 1)
     assert positioned.segments[0].get_parent()[0] is positioned
+
+
+@pytest.mark.parametrize("log_level", [logging.INFO, logging.DEBUG])
+def test__parser__partial_reparse_debug_budget(
+    generate_test_segments, fresh_ansi_dialect, caplog, log_level
+):
+    """Rejected partial matches do not spend node budget on disabled diagnostics."""
+
+    class PartialSegment(BaseSegment):
+        match_grammar = StringParser("foo", RawSegment)
+
+    segment = PartialSegment(generate_test_segments(["foo", "bar"]))
+    with caplog.at_level(log_level, logger="sqlfluff.linter"):
+        assert not segment.validate_segment_with_reparse(
+            fresh_ansi_dialect,
+            max_parse_depth=0,
+            max_parse_nodes=2 if log_level == logging.INFO else 0,
+        )
+    assert ("Incomplete Match" in caplog.text) == (log_level == logging.DEBUG)
 
 
 def test__parser__raw_segment_raw_normalized():

@@ -1369,11 +1369,13 @@ class BaseSegment(metaclass=SegmentMetaclass):
         ctx.seed_parse_nodes(len(trimmed_content))
         rematch = self.match(trimmed_content, 0, ctx)
         if not rematch.matched_slice == slice(0, len(trimmed_content)):
-            linter_logger.debug(
-                f"Validation Check Fail for {self}.Incomplete Match. "
-                f"\nMatched: {rematch.apply(trimmed_content, parse_context=ctx)}. "
-                f"\nUnmatched: {trimmed_content[rematch.matched_slice.stop :]}."
-            )
+            # 调试消息中的构树也会消耗时间和节点预算，仅在需要输出时执行。
+            if linter_logger.isEnabledFor(logging.DEBUG):
+                linter_logger.debug(
+                    f"Validation Check Fail for {self}.Incomplete Match. "
+                    f"\nMatched: {rematch.apply(trimmed_content, parse_context=ctx)}. "
+                    f"\nUnmatched: {trimmed_content[rematch.matched_slice.stop :]}."
+                )
             return False
         opening_unparsables = set(self.recursive_crawl("unparsable"))
         closing_unparsables: set[BaseSegment] = set()
